@@ -10,3 +10,4 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 ##Testing commiting this project to my repository
+## Testing making changes in R Studio and pushing to github through RStudio
