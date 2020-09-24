@@ -1,0 +1,41 @@
+---
+title: "Homework 2"
+author: "Maria Bolshakova"
+date: "9/23/2020"
+output: html_document
+---
+
+# 1.Download data and merging
+
+```{r}
+library(data.table)
+library(leaflet)
+library(tidyverse)
+data1 <- data.table::fread('chs_individual.csv')
+data2 <- data.table::fread('chs_regional.csv')
+new <- merge(data1, data2,by="townname")
+str(new)
+```
+
+## 2. New categorical variable of BMI
+```{r}
+new$obesity_level <-ifelse(new$bmi <14, "underweight",
+                           ifelse(new$bmi >=14 & new$bmi <22, "normal",
+                           ifelse(new$bmi >=22 & new$bmi <24, "overweight",
+                                  ifelse(new$bmi >=24, "obese", "NA"))))
+                                    
+## Checking to make sure cateogries are correct
+new %>%
+  group_by(obesity_level) %>%
+summarise(
+  first=min(bmi),
+  last=max(bmi)
+)
+
+## Number of observations per category
+new %>% count(obesity_level)
+
+```
+```
+
+
