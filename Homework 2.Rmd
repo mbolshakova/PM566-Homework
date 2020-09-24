@@ -2,7 +2,7 @@
 title: "Homework 2"
 author: "Maria Bolshakova"
 date: "9/23/2020"
-output: html_document
+output: github_document
 ---
 
 # 1.Download data and merging
@@ -16,26 +16,196 @@ data2 <- data.table::fread('chs_regional.csv')
 new <- merge(data1, data2,by="townname")
 str(new)
 ```
-
-## 2. New categorical variable of BMI
+## 2. Imputing data
 ```{r}
-new$obesity_level <-ifelse(new$bmi <14, "underweight",
-                           ifelse(new$bmi >=14 & new$bmi <22, "normal",
-                           ifelse(new$bmi >=22 & new$bmi <24, "overweight",
-                                  ifelse(new$bmi >=24, "obese", "NA"))))
+new2<-new[, bmi_imp := fcoalesce(bmi, mean(bmi, na.rm = TRUE)),
+    by = .(male, hispanic)]
+
+new2[, fev_imp := fcoalesce(fev, mean(fev, na.rm = TRUE)),
+    by = .(male, hispanic)]
+```
+
+## 3. New categorical variable of BMI
+```{r}
+new2$obesity_level <-ifelse(new2$bmi_imp <14, "underweight",
+                           ifelse(new2$bmi_imp >=14 & new2$bmi_imp <22, "normal",
+                           ifelse(new2$bmi_imp >=22 & new2$bmi_imp <24, "overweight", "obese")))
+                                  
                                     
 ## Checking to make sure cateogries are correct
-new %>%
+new2 %>%
   group_by(obesity_level) %>%
 summarise(
-  first=min(bmi),
-  last=max(bmi)
+  first=min(bmi_imp),
+  last=max(bmi_imp)
 )
 
 ## Number of observations per category
-new %>% count(obesity_level)
+new2 %>% count(obesity_level)
 
 ```
+
+## 4. Smoke and gas exposure variable
+```{r}
+new2$smoke_gas_exposure <-ifelse(new2$smoke ==0 & new2$gasstove==0, "None",
+                           ifelse(new2$smoke==0 & new2$gasstove==1, "Gas Only",
+                           ifelse(new2$smoke ==1 & new2$gasstove==0, "Smoke Only",
+                                  ifelse(new2$smoke==1 & new2$gasstove==1, "Both", "NA"))))
+
+## Left NA in because doesn't make sense to impute a binary variable
 ```
+
+## 5. Summary tables
+```{r}
+## Mean and SD of FEV by town
+new2[,list(mean=mean(fev_imp),sd=sd(fev_imp)),by=townname]
+#The town of Alpine has the highest avrage FEV
+
+## Mean and SD of FEV by sex
+new2[,list(mean=mean(fev_imp),sd=sd(fev_imp)),by=male]
+#The FEv is on average higher for males
+
+## Mean and SD of FEV by obesity level
+new2[,list(mean=mean(fev_imp),sd=sd(fev_imp)),by=obesity_level]
+#The highest average FEV is in the obese category
+
+## Mean and SD of FEV by smoke/gas exposure
+new2[,list(mean=mean(fev_imp),sd=sd(fev_imp)),by=smoke_gas_exposure]
+#The highest average FEV is in the none or smoke categories.
+
+## Proportion of asthma diagnosis by town
+mytable <- xtabs(~asthma+townname, data=new2)
+ftable(mytable) # print table
+summary(mytable) # chi-square test of indepedence
+#The chi sq test reveals no significant difference in asthma diagnosis across the different towns
+
+## Proportion of asthma diagnosis by sex
+mytable2 <- xtabs(~asthma+male, data=new2)
+ftable(mytable2) # print table
+summary(mytable2) # chi-square test of indepedence
+#The chi sq test reveals that there is a significant difference in asthma diagnosis by sex.
+
+## Proportion of asthma diagnosis by obesity level
+mytable3 <- xtabs(~asthma+obesity_level, data=new2)
+ftable(mytable3) # print table
+summary(mytable3) # chi-square test of indepedence
+#The chi sq test reveals no significant difference in asthma diagnosis across the 4 categories of obesity
+
+## Proportion of asthma diagnosis by smoke/gas exposure
+mytable4 <- xtabs(~asthma+smoke_gas_exposure, data=new2)
+ftable(mytable4) # print table
+summary(mytable4) # chi-square test of indepedence
+#The chi sq test reveals no significant difference in asthma diagnosis across the 4 categories of smoke/gas exposure 
+```
+
+## Looking at Data
+
+## 1. Checking data
+```{r}
+## Already checked bmi and smoke/exposure variables previously. Smoke/exposure has some missing, and BMI and obesity category seems to be fine (min of approx 11 and max of 41). Fev and bmi have been imputed for missing data based on the average of a hispanic male. 
+new2 %>%
+summarise(
+  first=min(fev_imp),
+  last=max(fev_imp)
+)
+
+new2 %>%
+summarise(
+  first=min(pm25_mass),
+  last=max(pm25_mass)
+)
+
+sum(is.na(new2$pm25_mass))
+##No missing values for pm2.5 mass and looks fine based on mix and max
+```
+
+## Facet plot showing scatterplots with regression lines of BMI vs FEV by town
+
+```{r}
+new2 %>%
+  ggplot(mapping = aes(x=bmi_imp, y=fev_imp))+
+  geom_point()+
+  stat_smooth(method=lm)+
+facet_wrap(~townname)+
+labs(title="Scatterplots of FEV vs BMI by town", x="BMI", y="FEV")
+#All of the town have a general positive linear trend of bmi vs fev, indicating that higher bmi results in higher FEV. However, this was not the case when we broke BMI into categories and performed a chi sq test in the previous problem. 
+```
+
+## Stacked histograms of FEV by BMI category and FEV by smoke/gas exposure. Use different color schemes than the ggplot default.
+
+```{r}
+new2 %>%
+  ggplot(aes(x=fev_imp, fill=obesity_level, color=obesity_level)) +
+  scale_fill_brewer(palette="Dark2")+
+  geom_histogram(position="identity")+
+labs(title="Histogram of FEV by BMI Category", x="BMI Category", y="FEV")
+
+#Since the majority of people in this dataset fall into the normal BMI category, the histogram largely is comprised of those people. While it may be easy to say that FEV is higher in those with normal BMI, I believe it is due to the larger sample size and variance.
+
+
+new2 %>%
+  ggplot(aes(x=fev_imp, fill=smoke_gas_exposure, color=smoke_gas_exposure)) +
+  scale_fill_brewer(palette="BuPu")+
+  geom_histogram(position="identity")+
+labs(title="Histogram of FEV by Smoke/Gas Exposure", x="Smoke/Gas Exposure", y="FEV")
+#The same is seen in this plot, in which gas only has a higher amount of observations than the other category. 
+
+```
+
+## Barchart of BMI by smoke/gas exposure
+
+```{r}
+new2 %>%
+  ggplot()+
+geom_bar(mapping=aes(x=obesity_level, fill=smoke_gas_exposure))+
+  scale_fill_brewer(palette="Spectral")+
+  labs(title="Barchart of BMI Category by Smoke/Gas Exposure")
+#Again, the normal BMI category and gas only make up the majority of people in the data set. If the distribution of people in these categories was equal, we would see a more balanced barchart. 
+```
+
+## Statistical summary graphs of FEV by BMI and FEV by smoke/gas exposure category.
+
+```{r}
+library(Hmisc)
+
+new2 %>%
+  filter(!(obesity_level %in% NA)) %>%
+  ggplot(mapping = aes (x=obesity_level, y=fev_imp))+
+  stat_summary(fun.data="mean_sdl")+
+   labs(title="Statistical Summary Graph of FEV by BMI Category", x="BMI Category", y="FEV")
+##Statistically, those in the obese category have on average, higher FEV and underweight have the lowest.
+
+new2 %>%
+  filter(!(smoke_gas_exposure %in% NA)) %>%
+  ggplot(mapping = aes (x=smoke_gas_exposure, y=fev_imp))+
+  stat_summary(fun.data="mean_sdl")+
+    labs(title="Statistical Summary Graph of FEV by Smoke/Gas Exposure", x="Smoke/Gas Exposure", y="FEV")
+#Average FEV tends to be equal among the smoke/gas exposure categories
+```
+
+## Leaflet map showing concentrations of PM2.5 mass in each of the CHS communities
+
+```{r}
+fev_imp_pal = colorNumeric(palette="Reds", domain=new2$fev_imp)
+
+leaflet(new2) %>%
+  addProviderTiles('OpenStreetMap')%>%
+  addCircles(lat=~lat, lng=~lon, color=~fev_imp_pal(fev_imp), opacity=1, fillOpacity = 1, radius=500) %>%
+  addLegend('bottomleft', pal=fev_imp_pal, values=new2$fev_imp, title="PM2.5 Mass Concentration", opacity=1)
+```
+
+## Choose a visualization to examine whether PM2.5 mass is associated with FEV.
+```{r}
+new2 %>%
+  ggplot(mapping = aes(x=pm25_mass, y=fev_imp))+
+  geom_jitter()+
+labs(title="Plot of PM2.5 mass and FEV", x="PM2.5 Mass", y="FEV")
+
+p <- ggplot(new2, aes(pm25_mass, fev_imp))
+p + geom_jitter(aes(color=obesity_level))
+
+#PM2.5 mass seems to have been measured continuously, but is still grouped into what appears to be 10 numbers/categories. There does not appear to be a linear trend among FEV and PM2.5 mass. 
+```
+
 
 
