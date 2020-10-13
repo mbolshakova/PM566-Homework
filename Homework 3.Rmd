@@ -1,0 +1,247 @@
+---
+title: "Homework 3"
+author: "Maria Bolshakova"
+date: "10/13/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(httr)
+library(xml2)
+library(stringr)
+```
+
+# APIs
+```{r counter-pubmed, eval=TRUE, cache=TRUE}
+# Downloading the website
+website <- xml2::read_html("https://pubmed.ncbi.nlm.nih.gov/?term=sars-cov-2+trial+vaccine")
+# Finding the counts
+counts <- xml2::xml_find_first(website, "/html/body/main/div[9]/div[2]/div[2]/div[1]/span")
+# Turning it into text
+counts <- as.character(counts)
+# Extracting the data using regex
+stringr::str_extract(counts, "[0-9,]+")
+```
+
+There were 560 papers retrieved under the term "sars-cov-2 trial vaccine", which corresponds with the search on the PubMed database
+
+```{r papers-covid-vaccine, results="hide"}
+library(httr)
+query_ids2 <- GET(
+  url   = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi",
+  query = list(
+    db = "pubmed",
+               term = "sars-cov-2 trial vaccine",
+               retmax = 250)
+)
+# Extracting the content of the response of GET
+ids2 <- httr::content(query_ids2)
+```
+
+```{r get-ids, results= "hide"}
+# Turn the result into a character vector
+ids2 <- as.character(ids2)
+cat(ids2)
+# Find all the ids 
+ids2 <- stringr::str_extract_all(ids2, "<Id>[0-9]+</Id>")[[1]]
+# Remove all the leading and trailing <Id> </Id>. Make use of "|"
+ids2 <- stringr::str_remove_all(ids2, "<Id>|</Id>")
+```
+
+```{r get-abstracts, results="hide"}
+publications2 <- GET(
+  url   = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi",
+  query = list(
+    db = "pubmed",
+    id = paste(ids2, collapse=","),
+      retmax = 250,
+    rettype = "abstract"
+    )
+)
+# Turning the output into character vector
+publications2 <- httr::content(publications2)
+publications_txt2 <- as.character(publications2)
+```
+
+
+```{r one-string-per-response, results="hide"}
+pub_char_list2 <- xml2::xml_children(publications2)
+#Splits the xml file
+pub_char_list2 <- sapply(pub_char_list2, as.character)
+```
+
+```{r extracting-last-bit, results="hide"}
+abstracts2 <- str_extract(pub_char_list2, "<Abstract>(\\n|.)+</Abstract>")
+abstracts2 <- str_remove_all(abstracts2, "</?[[:alnum:]]+>")
+abstracts2 <- str_replace_all(abstracts2, "\\s+", " ")
+table(is.na(abstracts2))
+```
+
+```{r process-titles, results="hide"}
+titles2 <- str_extract(pub_char_list2, "<ArticleTitle>(\\n|.)+</ArticleTitle>")
+titles2 <- str_remove_all(titles2, "</?[[:alnum:]]+>")
+titles2 <- str_replace_all(titles2, "\\s+", " ")
+table(is.na(titles2))
+```
+
+```{r process-pubdates, results="hide"}
+dates3 <- str_extract(pub_char_list2, "<PubDate>(\\n|.)+</PubDate>")
+dates3 <- str_remove_all(dates3, "</?[[:alpha:]]+>")
+dates4 <- str_remove_all(dates3, "\n")
+dates5 <- str_remove_all(dates4, "</?[[:punct:]]+>")
+table(is.na(dates4))
+```
+
+```{r process-journals, results="hide"}
+journals2 <- str_extract(pub_char_list2, "<MedlineTA>(\\n|.)+</MedlineTA>")
+table(is.na(journals2))
+```
+
+
+## Table of Articles
+
+```{r build-db, eval = TRUE}
+database2 <- data.frame(
+  PubMedID = ids2,
+  Title = titles2,
+  Abstract = abstracts2,
+  PublicationDate=dates5,
+  JournalAbbrevation=journals2
+)
+knitr::kable(database2)
+```
+
+#Text Mining
+
+```{r, include=FALSE}
+pubmed <- data.table::fread("pubmed.csv")
+library(dplyr)
+library(ggplot2)
+library(tidytext)
+library(tidyr)
+library(forcats)
+```
+
+## Tokenizing Abstracts
+```{r}
+
+pubmed %>%
+  unnest_tokens(token, abstract)%>%
+  count(token, sort=TRUE)%>%
+  top_n(n=20, wt=n)%>%
+ggplot(aes(x=n, y=fct_reorder(token, n)))+
+  geom_col()
+```
+
+Most of the words are stop words, besides 'covid'/'19', 'patients', 'cancer', and 'prostate'.
+
+#### Eliminate stopwords
+
+```{r}
+pubmed %>%
+  unnest_tokens(token2, abstract) %>%
+  anti_join(stop_words, by = c("token2" = "word")) %>%
+
+  
+  #counting the top and visualizing it with barchart
+  count(token2, sort = TRUE)%>%
+ top_n(n=20, wt=n)%>%
+ggplot(aes(x=n, y=fct_reorder(token2, n)))+
+  geom_col()
+```
+
+Much more relevant tokens now. Covid and 19 are the two top tokens and appear in almost the same frequency since they are linked, although Covid shows up a bit more. After that, some of the search terms come up most frequently such as preeclampsia, and prostate/cancer. Meningitis and cystic/fibrosis do not appear, even though they are part of the 5 search terms.
+
+```{r}
+pubmed %>%
+  unnest_tokens(token3, abstract)%>%
+  anti_join(tidytext::stop_words, by=c("token3" = "word"))%>%
+  group_by(term)%>%
+  count(token3)%>%
+  top_n(5, n)
+```
+
+Interesting/unique tokens by search terms--
+
+Covid: pandemic, disease
+
+Cystic fibrosis: all related to cystic fibrosis
+
+Meningitis: csf
+
+Preeclampsia: pregnancy, women
+
+Prostate cancer: treatment
+
+
+
+## Bigrams
+```{r}
+pubmed %>%
+  unnest_ngrams(output= bigram, input= abstract, n=2) %>%
+   anti_join(stop_words, by = c("bigram" = "word")) %>%
+  count(bigram, sort = TRUE)%>%
+  top_n(n=10, wt=n)%>%
+ggplot(aes(x=n, y=fct_reorder(bigram, n)))+
+  geom_col()
+```
+
+The bigrams (with stop words not removed) are what would be expected to appear in abstracts, with the most frequent bigram by far being covid 19. 
+
+
+
+### Getting rid of stop words in bigram
+```{r}
+pubmed2<- pubmed%>%
+  unnest_ngrams(output= bigram2, input= abstract, n=2) %>%
+  separate(col=bigram2, into=c("word1", "word2"), sep = " ")%>%
+  select(word1, word2)
+
+pubmed2 %>%
+  anti_join(
+    tidytext::stop_words %>% select(word), by = c("word1" = "word")
+  )%>%
+  anti_join(
+    tidytext::stop_words %>% select(word), by = c("word2" = "word")
+  )%>%
+  count(word1, word2, sort=TRUE)%>%
+  top_n(n=10, wt=n)
+```
+
+When the stop words are removed, the most frequent bigrams are "covid 19", "prostate cancer", "pre eclampsia", "cystic fibrosis", and "coronavirus disease". This is very close to the search terms and is only missing meningitis. 
+
+
+## TF-IDF Value
+```{r}
+
+pubmed3 <- pubmed %>%
+  unnest_tokens(abstract, abstract)%>%
+  count(abstract, term) %>%
+bind_tf_idf(abstract, term, n) %>%
+arrange(desc(tf_idf))
+
+  pubmed3 %>%
+    group_by(term)%>%
+arrange(desc(tf_idf))
+  
+```
+
+#### Highest TD-IDF values for each search term-
+
+
+Covid: Covid, pandemic, coronavirus, sars, cov.
+
+Prostate cancer: prostate cancer, androgen, psa, prostatectomy, castration
+
+Preeclampsia: eclampsia, preeclampsia, pregnancy, maternal, gestational
+
+Meningitis: meningitis, meningeal, pachymeningitis, csf, meninges
+
+Cystic fibrosis: cf, fibrosis, cystic, cftr, sweat
+
+
+The highest TD-IDF value tokens are more unique/interesting than the ones obtained in question 1. For example, for prostate cancer we get unique terms such as androgen, psa, prostatectomy, and castration, all which did not show up in question 1. We also get pachymeningitis and meninges in the meningitis search term, and sweat in cystic fibrosis which are all unique and interesting to look into. 
+
+
+
+
